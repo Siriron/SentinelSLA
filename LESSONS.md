@@ -10,6 +10,20 @@ If anything here conflicts with the project's own "GenLayer Build — Project Kn
 
 ## Part 1 — New GenVM/API facts, confirmed live, not in project knowledge before this build
 
+### 1.0 `createAccount()` expects a private key — never pass a browser-wallet address to it
+
+**Confirmed the hard way, during actual Vercel deployment, not caught in this build's own sandbox** (which had no network access to run a real `npm install`/`tsc`/`vite build` — see Part 3.2 for why that ceiling matters here specifically). The original `useGenLayer.ts` called `createAccount(account)`, passing the connected wallet's address into a function whose real parameter is a **private key**.
+
+**Confirmed directly against GenLayer's own SDK documentation, in their own words:** *"Use `createAccount()` when you want the SDK to handle transaction signing directly. For MetaMask or other external wallet integration, pass just the address string to `createClient()`."*
+
+**Why this didn't throw an error and was so easy to miss:** a wallet address and a private key are both `0x`-prefixed hex strings. Nothing type-checks the semantic difference between them. This means the bug wouldn't announce itself as a compile error or an obvious crash — it would produce a broken or mismatched signing setup that could fail unpredictably, or in subtle ways, on real write transactions in production. This is a materially worse failure mode than a build-time type error, because it can pass casual testing and only misbehave under specific conditions.
+
+**The fix:** pass the address directly, typed as `\`0x${string}\``, as the `account` field — never wrapped in `createAccount()` — for any app where the write path goes through a browser wallet (`window.ethereum`, `eth_requestAccounts`) rather than a raw private key held by the app itself. `createAccount()` is for the opposite case: an app that holds and uses a private key directly, with no external wallet involved at all.
+
+**Action for the next build:** if the app connects via a browser wallet extension (the WalletButton/`eth_requestAccounts` pattern this project always uses for a Projects-track frontend), never call `createAccount()` on the connected address. Pass the address string directly as `account` in `createClient()`. Grep any inherited `useGenLayer.ts`-style hook for `createAccount(` before reusing it, and confirm it's a real project-knowledge-confirmed pattern rather than trusting it because it looks plausible — this exact mistake looked plausible enough to ship.
+
+---
+
 ### 1.1 `gl.message_raw["datetime"]` is an ISO-8601 string, not a Unix integer
 
 **This was an open question before this build.** Recourse's own docstring (see project knowledge, section 4) explicitly says this format was "never confirmed against a worked example." It is now confirmed, the hard way, via a live production error:
@@ -82,7 +96,9 @@ Confirmed directly against GenLayer's own Web Access documentation before use, n
 
 This sandbox environment had zero network egress. This means: no package registry access, no real TypeScript compilation, no real bundler run, ever, for this entire build. Every verification performed on the frontend was a genuine, but meaningfully weaker, substitute: relative-import-path resolution (reliable), a custom bracket-balance scanner (has confirmed real blind spots, see 3.1), and careful manual reading. **This is categorically less confidence than the contract's own verification enjoyed** — the contract could be checked with a real Python `ast.parse()` and a real `tokenize` pass, both genuine compiler-grade tools; nothing equivalent existed for the TypeScript/React side in this environment.
 
-**Action for the next build:** state this limitation plainly, early, in any conversation — don't let a long, careful-looking verification process on the frontend imply the same confidence level as the contract's verification. If the next environment *does* have network access, use it — run the real build, don't default to the manual-checking process this build was forced into just because it's a known pattern now.
+**This gap was not hypothetical — it produced a real, confirmed production bug.** Section 1.0's `createAccount()` misuse shipped through every check this environment could run (import resolution, bracket balance, manual review) and was only caught when the app was actually built and deployed for real, on Vercel, where a real `tsc` pass exists. A missing `vite-env.d.ts` (needed for `import.meta.env.VITE_*` typing) was a second, independent thing this environment's checks couldn't catch. Both are now fixed in this repo — but they stand as direct proof, not just a cautious disclaimer, that "passed every check available in this sandbox" and "passed a real compiler" are different claims.
+
+**Action for the next build:** state this limitation plainly, early, in any conversation — don't let a long, careful-looking verification process on the frontend imply the same confidence level as the contract's verification. If the next environment *does* have network access, use it — run the real build, don't default to the manual-checking process this build was forced into just because it's a known pattern now. If it doesn't, budget explicitly for the person running a real build themselves and reporting back what breaks — that step is not optional polish, it's where real bugs like 1.0 actually get caught.
 
 ### 3.3 A working desktop layout does not confirm a working mobile layout — check both explicitly, as separate questions
 
