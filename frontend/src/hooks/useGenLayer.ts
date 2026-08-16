@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createClient, createAccount } from 'genlayer-js';
+import { createClient } from 'genlayer-js';
 import { studionet } from 'genlayer-js/chains';
 import {
   STUDIONET_CONFIG,
@@ -9,7 +9,6 @@ import {
 } from '../config/chains';
 import SENTINEL_SLA_ABI_METHODS from '../lib/contractMethods';
 
-// Builds an Error carrying the transaction hash and timeout state.
 export class TimeoutError extends Error {
   txHash: string;
   isTimeout = true;
@@ -22,7 +21,6 @@ export class TimeoutError extends Error {
   }
 }
 
-// Switch the wallet to StudioNet only when a write operation is requested.
 async function ensureChain() {
   const eth = (window as any).ethereum;
 
@@ -57,7 +55,6 @@ export function useGenLayer() {
   const [connecting, setConnecting] = useState(false);
   const readClientRef = useRef<any>(null);
 
-  // Silently reconnect to an already-authorized wallet.
   useEffect(() => {
     const eth = (window as any).ethereum;
 
@@ -134,9 +131,21 @@ export function useGenLayer() {
 
     await ensureChain();
 
+    /*
+     * IMPORTANT:
+     *
+     * Do NOT use createAccount(account) here.
+     *
+     * createAccount() expects a private key.
+     * A browser wallet gives us a public address.
+     *
+     * GenLayerJS supports browser wallets by passing the
+     * wallet address directly as `account` and the wallet
+     * provider as `provider`.
+     */
     const client = createClient({
       chain: studionet,
-      account: createAccount(account as `0x${string}`),
+      account: account as `0x${string}`,
       provider: eth,
     });
 
@@ -144,7 +153,9 @@ export function useGenLayer() {
       try {
         await client.connect('studionet');
       } catch {
-        // Non-fatal. Continue without explicit connect.
+        // Network switching is already handled by ensureChain().
+        // Do not fail solely because connect() is unavailable
+        // or unnecessary for this SDK/provider combination.
       }
     }
 
@@ -167,7 +178,10 @@ export function useGenLayer() {
   );
 
   const writeContract = useCallback(
-    async (functionName: string, args: any[] = []): Promise<{ hash: string }> => {
+    async (
+      functionName: string,
+      args: any[] = []
+    ): Promise<{ hash: string }> => {
       const client = await getWriteClient();
 
       const hash = await client.writeContract({
@@ -203,4 +217,4 @@ export function useGenLayer() {
     contractAddress: STUDIONET_CONTRACT_ADDRESS,
     methods: SENTINEL_SLA_ABI_METHODS,
   };
-}
+        }
