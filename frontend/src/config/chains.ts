@@ -2,7 +2,10 @@
 
 // SentinelSLA — chain configuration
 //
-// StudioNet only, by explicit project convention.
+// StudioNet only, by explicit project convention (every SentinelSLA
+// deployment and every future app in this project targets StudioNet;
+// Bradbury is not wired up here — offering a network toggle with no real
+// deployment behind it would be worse than not offering one at all).
 
 export const STUDIONET_CONTRACT_ADDRESS =
   import.meta.env.VITE_CONTRACT_ADDRESS_STUDIONET ||
