@@ -39,7 +39,7 @@ A maintainer commits, on-chain, to a resolution-time window (`sla_hours`) for a 
 
 ## Consensus design
 
-Every nondet write uses `gl.vm.run_nondet_unsafe` with a fully hand-written `validator_fn` — not `gl.eq_principle.prompt_comparative`. This was a deliberate choice: an audited comparison contract (Lumina Protocol, 360-point Projects-track submission) used `prompt_comparative` with an equivalence principle that explicitly excluded score-bearing fields from the agreement check, meaning its leader alone decided the numbers that determined payout while validators only agreed on a coarse verdict bucket. Every field this contract's reputation delta depends on — verdict, fix substantiveness, resolution hours (within a named ±2h tolerance), and every reason code — is independently re-derived by each validator and compared directly, closing that gap.
+Every nondet write uses `gl.vm.run_nondet_unsafe` with a fully hand-written `validator_fn` — not `gl.eq_principle.prompt_comparative`. This was a deliberate choice: an audited comparison contract (a 360-point Projects-track submission) used `prompt_comparative` with an equivalence principle that explicitly excluded score-bearing fields from the agreement check, meaning its leader alone decided the numbers that determined payout while validators only agreed on a coarse verdict bucket. Every field this contract's reputation delta depends on — verdict, fix substantiveness, resolution hours (within a named ±2h tolerance), and every reason code — is independently re-derived by each validator and compared directly, closing that gap.
 
 ## Confirmed live behavior (not just theoretical)
 
