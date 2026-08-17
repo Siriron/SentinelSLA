@@ -122,7 +122,7 @@ CONSENSUS MECHANISM: run_nondet_unsafe with a fully hand-written
 validator_fn that independently re-derives and compares EVERY field the
 reputation delta depends on, with named tolerance where applicable. This
 was a deliberate choice over gl.eq_principle.prompt_comparative after
-auditing a comparable live contract (Lumina Protocol) that used
+auditing a comparable live contract that used
 prompt_comparative with an equivalence principle explicitly excluding
 score fields from the agreement check ("ignore all variations in
 scores... recommended_reward") -- meaning the leader alone decided the
@@ -209,7 +209,7 @@ _MIN_REASONING_LEN = 20
 
 # Resolution-hours tolerance: GHSA timestamps are ISO-8601 UTC and fixed
 # once published_at/closed_at are set — these are NOT independently-
-# refetched-and-drifting fields the way Lumina's live-page scores were, so
+# refetched-and-drifting fields the way a live-page score would be, so
 # a tight tolerance is appropriate. This guards only against LLM arithmetic
 # slop (e.g. rounding hours vs minutes), not genuine source variance.
 _RESOLUTION_HOURS_TOLERANCE = 2
@@ -901,7 +901,7 @@ Respond ONLY with JSON using exactly these keys:
 
             # Every field the reputation delta depends on is re-derived
             # and compared here — the exact gap this contract's docstring
-            # names in the audited comparison contract (Lumina Protocol),
+            # names in the audited comparison contract,
             # where score-affecting fields were excluded from consensus.
             if leader_data["verdict"] not in _VALID_VERDICTS:
                 return False
@@ -962,8 +962,9 @@ Respond ONLY with JSON using exactly these keys:
         })
 
     # ------------------------------------------------------------------
-    # Challenge (second independent nondet round — Lumina's confirmed-
-    # good escrow/appeal structural pattern, matched here with full
+    # Challenge (second independent nondet round — a confirmed-
+    # good escrow/appeal structural pattern from a comparable live
+    # contract, matched here with full
     # hand-written re-derivation rigor rather than prompt_comparative)
     # ------------------------------------------------------------------
 
