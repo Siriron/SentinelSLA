@@ -13,10 +13,9 @@ is NOT independently confirmed against primary GenLayer documentation or
 source in this session — web search and fetch attempts against the
 genlayer-testing-suite repository itself did not resolve to a fetchable
 result. This surface is pattern-matched from a real, live, portal-accepted
-contract's own working test file (Lumina Protocol, `tests/test_lumina_
-protocol.py`), which is meaningful evidence that this pattern works in
-practice, but it is a different kind of confidence than a primary-source
-confirmation, and that difference is being stated here rather than
+contract's own working test file, which is meaningful evidence that this
+pattern works in practice, but it is a different kind of confidence than
+a primary-source confirmation, and that difference is being stated here rather than
 smoothed over. RUN THIS SUITE AND CONFIRM IT ACTUALLY EXECUTES before
 treating it as verified — if `gltest.direct`'s real API differs from what
 is used below, this file will fail immediately and loudly at import time,
@@ -34,8 +33,8 @@ verification detail). What is NOT independently confirmed is whether
 ["datetime"] is then presented to contract code as that same integer, as
 an ISO string derived from it, or something else entirely -- vm.warp's
 own argument type and gltest's internal mock format were pattern-matched
-from Lumina's working test file the same way the rest of this module's
-gltest usage was, and that pattern predates this live datetime-format
+from that same reference test file the rest of this module's
+gltest usage was drawn from, and that pattern predates this live datetime-format
 discovery. If the tests below that depend on vm.warp's exact timing (the
 challenge-window and finalize-window tests) fail while the purely-
 deterministic tests (register_sla, file_compliance_check validation, and
