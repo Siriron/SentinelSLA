@@ -4,7 +4,7 @@
 
 | Network | Address |
 |---|---|
-| StudioNet | `0x9bf02585228D7A7E3d4dcB3a35928045a7C250E8` |
+| StudioNet | `0x2DdE4639AC5941FD46cA3Fa035ee56e33f2d9ff6` |
 
 Bradbury is not deployed for this project. StudioNet-only is a deliberate, standing convention for this build, not an oversight.
 
@@ -22,18 +22,21 @@ cd frontend
 npm install
 ```
 
-Set the deployed contract address in `.env` (copy `.env.example` and fill in the real value, or use Vercel project environment variables):
+Set the deployed contract address in `frontend/src/config/chains.ts`:
 
+```typescript
+export const STUDIONET_CONTRACT_ADDRESS =
+  '0x2DdE4639AC5941FD46cA3Fa035ee56e33f2d9ff6';
 ```
-VITE_CONTRACT_ADDRESS_STUDIONET=0x9bf02585228D7A7E3d4dcB3a35928045a7C250E8
-```
+
+This is a single plain constant, referenced from nowhere else in the app — no `.env`, no `.env.example`, no Vercel environment variable. Changing the deployed address later means editing this one line in this one file.
 
 ```bash
 npm run dev      # local development
 npm run build    # production build
 ```
 
-For Vercel: import the repo, set the root directory to `frontend`, set the environment variable above in the Vercel project settings, and deploy. `vercel.json` already includes the required SPA rewrite.
+For Vercel: import the repo, set the root directory to `frontend`, and deploy — no environment variables to set, the contract address lives in `chains.ts` above. `vercel.json` already includes the required SPA rewrite.
 
 ## Testing status — stated plainly, not rounded up
 

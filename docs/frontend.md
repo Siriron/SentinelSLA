@@ -18,7 +18,7 @@ src/
   config/        chains.ts — single source of truth for RPC/chainId/explorer/contract address
   hooks/         useGenLayer.ts — wallet connect, ensureChain, read/write contract calls
   lib/           contractMethods.ts — method-name registry matching the deployed contract exactly
-  pages/         Home, RegisterSla, FileCheck, Ledger, Docs, NotFound
+  pages/         Home, RegisterSla, FileCheck, CheckDetail, Ledger, Docs, NotFound
 ```
 
 ## Confirmed SDK patterns in use
