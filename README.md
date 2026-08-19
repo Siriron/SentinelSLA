@@ -48,7 +48,7 @@ SentinelSLA reads GitHub's own security-advisory records — never a maintainer'
 
 ## How it works
 
-1. A maintainer locks a repo and a resolution-time commitment on-chain, before any advisory exists.
+1. A maintainer locks a repo and a resolution-time commitment on-chain, before any advisory exists. `register_sla` verifies the repo genuinely exists on GitHub and that the caller controls it — via a file committed to the repo containing their own wallet address — before the commitment is accepted.
 2. Anyone files a compliance check referencing a real GHSA advisory ID — never a URL, never a free-text claim.
 3. The contract fetches the advisory directly from GitHub, and — if the advisory's own record links one — fetches the actual fix diff, not a rendered HTML page.
 4. Independent validators re-derive and compare every field the verdict depends on: resolution timing, fix substantiveness, reason codes.
@@ -78,7 +78,7 @@ SentinelSLA reads GitHub's own security-advisory records — never a maintainer'
 
 | Network | Address | Explorer |
 |---|---|---|
-| StudioNet | `0x9bf02585228D7A7E3d4dcB3a35928045a7C250E8` | [View](https://explorer-studio.genlayer.com/address/0x9bf02585228D7A7E3d4dcB3a35928045a7C250E8) |
+| StudioNet | `0x2DdE4639AC5941FD46cA3Fa035ee56e33f2d9ff6` | [View](https://explorer-studio.genlayer.com/address/0x2DdE4639AC5941FD46cA3Fa035ee56e33f2d9ff6) |
 
 </div>
 
@@ -122,10 +122,16 @@ LICENSE                       MIT
 ![Tested](https://img.shields.io/badge/resolve__compliance%20%C3%97%203%20advisories-tested-brightgreen?style=flat-square)
 ![Tested](https://img.shields.io/badge/full%20lifecycle%20to%20reputation%20ledger-tested-brightgreen?style=flat-square)
 ![Untested](https://img.shields.io/badge/compliant%20verdict%20branch-untested%20live-yellow?style=flat-square)
+![Untested](https://img.shields.io/badge/canonical%20repo%20binding%20%2B%20ownership%20check-untested%20live-yellow?style=flat-square)
+![Untested](https://img.shields.io/badge/duplicate%2Finvalid%20filing%20rejection-untested%20live-yellow?style=flat-square)
 
 </div>
 
-Every write method has been exercised live on StudioNet, including both nondet functions (`resolve_compliance`, `resolve_challenge`) and the full registration-through-finalized-reputation lifecycle. `resolve_compliance` specifically was tested against three structurally different real GHSA advisories — still-open, closed-with-a-real-fix, and withdrawn — with clean, five-validator consensus and zero problematic rotations each time.
+This repo is at a new contract address (`0x2DdE4639AC5941FD46cA3Fa035ee56e33f2d9ff6`), redeployed to add canonical repository binding, a repository-backed ownership check, and duplicate/invalid-filing rejection — see `docs/contracts.md` for the full list of what changed and why.
+
+**Carried forward from the prior deployment's live testing, and not touched by this change:** `resolve_compliance`'s and `resolve_challenge`'s core judgment logic, and the escrow → challenge → finalize → reputation-ledger path, are unmodified by this fix. `resolve_compliance` was tested against three structurally different real GHSA advisories — still-open, closed-with-a-real-fix, and withdrawn — with clean, five-validator consensus and zero problematic rotations each time, and the full lifecycle through a finalized reputation-ledger entry was confirmed end to end. That evidence pertains to the prior address; the underlying code paths it tested are the same code paths at this address, but the test runs themselves have not been repeated here.
+
+**Not yet live-tested at this address, stated plainly rather than assumed to still hold:** `register_sla`'s new nondet round (repo-existence check + on-repo ownership proof), the applicability check inside `resolve_compliance` that rejects a GHSA advisory whose own `source_code_location` doesn't match the registered repo, and the duplicate-filing guard in `file_compliance_check`. All three are structurally consistent with this project's confirmed nondet rules, but "structurally correct" and "confirmed via live GenVM stderr" are different claims — treat these as the first things to exercise in Run and Debug.
 
 One branch has not been observed live: a `compliant` verdict with populated resolution-hours math, because every real advisory queried during testing had an unset `closed_at` on GitHub's own API — which the contract correctly reports as `unverifiable` rather than guessing. This is a property of the evidence source, documented in `docs/contracts.md`, not an unverified code path — that arithmetic was confirmed correct by direct inspection, not live execution.
 
