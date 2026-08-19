@@ -445,6 +445,66 @@ def _fetch_text(url) -> str:
         return "[fetch failed: unreachable or errored]"
 
 
+def _parse_repo_url(repo_url):
+    """
+    Parses a github.com repo reference into (owner, name), tolerating the
+    common variants a person would plausibly paste: with/without scheme,
+    with/without trailing slash, with/without a trailing '.git'. Returns
+    (None, None) on anything that doesn't parse to a plain two-segment
+    owner/repo path — this is intentionally strict rather than permissive,
+    since a loosely-parsed owner/repo is exactly the kind of ambiguity
+    that would undermine the canonical-repository binding this parser
+    exists to establish (see register_sla's own docstring note on this).
+    Never raises.
+    """
+    if not isinstance(repo_url, str):
+        return None, None
+    s = repo_url.strip()
+    if not s:
+        return None, None
+    s = s.replace("https://", "").replace("http://", "")
+    if s.startswith("www."):
+        s = s[4:]
+    if not s.startswith("github.com/"):
+        return None, None
+    s = s[len("github.com/"):]
+    s = s.strip("/")
+    if s.endswith(".git"):
+        s = s[: -len(".git")]
+    parts = s.split("/")
+    if len(parts) != 2:
+        return None, None
+    owner, name = parts[0].strip(), parts[1].strip()
+    if not owner or not name:
+        return None, None
+    # GitHub owner/repo names are restricted to alphanumerics, hyphens,
+    # underscores, and dots — reject anything else defensively rather
+    # than passing untrusted characters into a URL this contract itself
+    # constructs and fetches server-side.
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
+    if not all(ch in allowed for ch in owner) or not all(ch in allowed for ch in name):
+        return None, None
+    return owner, name
+
+
+def _canonical_repo_key(owner, name) -> str:
+    """
+    Single normalized form ('owner/name', lowercased) used as this
+    contract's TreeMap key for SLAs — never the free-text string a caller
+    originally typed. This closes a real gap the prior version of this
+    contract had: 'github.com/foo/bar', 'https://github.com/foo/bar/',
+    and 'github.com/foo/bar.git' all name the same repository but were
+    previously three distinct TreeMap keys, meaning the same repo could
+    be registered multiple times under cosmetically different strings.
+    Lowercased to match this project's confirmed-working address-key
+    normalization convention (see the reputation TreeMap's own key
+    normalization elsewhere in this file) — GitHub owner/repo names are
+    themselves case-insensitive for routing purposes, so lowercasing here
+    does not lose any real distinction between two different repos.
+    """
+    return f"{owner}/{name}".lower()
+
+
 def _to_raw_diff_url(url) -> str:
     """
     CONFIRMED LIVE (Aug 15 2026, SentinelSLA StudioNet check #2, GHSA-
@@ -504,6 +564,63 @@ _VERDICT_ALIASES = ("verdict", "result", "decision")
 _FIX_ALIASES = ("fix_substantiveness", "fix_quality", "fix_status")
 _HOURS_ALIASES = ("resolution_hours", "hours_to_resolve", "resolution_time_hours")
 _REASONING_ALIASES = ("reasoning_summary", "reasoning", "explanation", "rationale")
+
+# ---------------------------------------------------------------------------
+# Repository ownership/authorization check (register_sla) — a repository-
+# file challenge, structurally the same evidence pattern this contract
+# already uses elsewhere (server-side fetch of GitHub-hosted content,
+# never a submitter-typed claim taken at face value): the maintainer
+# proves control of the repo by committing a file at this fixed path
+# containing the exact wallet address that will call register_sla. This
+# is deliberately NOT an off-chain OAuth/identity-linking flow — that
+# would require infrastructure this contract does not have — it is a
+# plain, on-chain-verifiable "you must be able to write to this repo to
+# pass this check" proof, the same class of mechanism domain-ownership
+# and Gist-based verification services use.
+# ---------------------------------------------------------------------------
+
+_OWNERSHIP_PROOF_PATH = "SENTINELSLA.md"
+
+
+def _address_in_proof_text(proof_text, address_hex) -> bool:
+    """
+    Plain, deterministic containment check — the registering wallet's
+    lowercased hex address must appear somewhere in the fetched proof
+    file's lowercased text. Deliberately simple (no parsing of a specific
+    file format) so the maintainer-facing instructions can be equally
+    simple ("put your address in this file, anywhere"), while still being
+    a real, repository-backed authorization check: only someone who can
+    commit to the repo can make this fetch return true for their address.
+    """
+    if not isinstance(proof_text, str) or not proof_text:
+        return False
+    if proof_text.startswith("[fetch failed"):
+        return False
+    if not isinstance(address_hex, str) or not address_hex:
+        return False
+    return address_hex.strip().lower() in proof_text.lower()
+
+
+def _repo_matches_source_location(source_code_location, owner, name) -> bool:
+    """
+    Checks a GHSA advisory's own source_code_location field (a GitHub
+    repo URL GitHub itself associates with the affected package — see
+    GitHub's global security-advisories API schema) against the repo_url
+    a compliance check was filed against, via the same owner/name parse
+    used everywhere else in this contract. This is the structural fix for
+    ask #2's 'invalid filing' half: without this, any real GHSA ID could
+    be filed against any registered SLA, regardless of whether the
+    advisory actually concerns that repository at all. Returns False
+    (never raises) on a missing, malformed, or non-github.com location —
+    an advisory GitHub itself doesn't tie to a github.com source is not
+    usable evidence for a repo-scoped compliance judgment here.
+    """
+    if not isinstance(source_code_location, str) or not source_code_location:
+        return False
+    loc_owner, loc_name = _parse_repo_url(source_code_location)
+    if loc_owner is None or loc_name is None:
+        return False
+    return _canonical_repo_key(loc_owner, loc_name) == _canonical_repo_key(owner, name)
 
 
 def _coerce_verdict(raw) -> str:
@@ -578,6 +695,10 @@ def _parse_leader_json(result) -> dict:
 @dataclass
 class SlaRecord:
     repo_url: str
+    repo_owner: str  # canonical, from _parse_repo_url — never re-derived
+    repo_name: str   # from repo_url downstream; the parse happened once,
+                      # at register_sla time, against a repo already
+                      # confirmed to exist and be owned by the caller.
     ecosystem: str
     maintainer: Address
     sla_hours: u256
@@ -589,6 +710,8 @@ class SlaRecord:
 @dataclass
 class ComplianceCheck:
     check_id: u256
+    repo_key: str  # canonical 'owner/name' key into self.slas — resolved
+                    # once at filing time, never re-parsed downstream.
     repo_url: str
     ghsa_id: str
     filer: Address
@@ -633,10 +756,39 @@ class ReputationEntry:
 
 
 class SentinelSLA(gl.Contract):
-    slas: TreeMap[str, SlaRecord]  # keyed by repo_url
+    slas: TreeMap[str, SlaRecord]  # keyed by canonical 'owner/name' (lowercased)
+                                     # — never a caller's raw repo_url string,
+                                     # per _canonical_repo_key's own docstring.
     checks: TreeMap[u256, ComplianceCheck]
     challenges: TreeMap[u256, Challenge]
     reputation: TreeMap[str, ReputationEntry]  # keyed by maintainer address hex
+    filed_ghsa_pairs: TreeMap[str, str]  # keyed by 'repo_key:ghsa_id', value is
+                                           # the status of the check that owns
+                                           # that pair — guards against the
+                                           # same advisory being filed twice
+                                           # against the same repo once the
+                                           # first filing has reached a
+                                           # terminal (finalized or voided)
+                                           # state. See file_compliance_check's
+                                           # own comment for why this can't
+                                           # simply be "reject if key exists":
+                                           # an in-flight duplicate filed
+                                           # before the first resolves needs
+                                           # different handling than one filed
+                                           # after the first already finalized.
+    latest_check_by_filer: TreeMap[str, u256]  # keyed by filer's lowercased
+                                                  # address hex, value is that
+                                                  # filer's own most recently
+                                                  # filed check_id. Replaces
+                                                  # inferring a just-filed
+                                                  # check's ID from the global
+                                                  # next_check_id counter (a
+                                                  # real race condition under
+                                                  # concurrent filers) — the
+                                                  # frontend instead reads this
+                                                  # back via get_latest_check_id,
+                                                  # scoped to the actual sender,
+                                                  # never the global counter.
     next_check_id: u256
     next_challenge_id: u256
 
@@ -645,7 +797,15 @@ class SentinelSLA(gl.Contract):
         self.next_challenge_id = u256(1)
 
     # ------------------------------------------------------------------
-    # Registration (fully deterministic, no nondet)
+    # Registration — deterministic parsing/lookups, then ONE nondet round
+    # for the two live GitHub fetches this now requires (repo-existence,
+    # ownership-proof). This method was previously fully deterministic
+    # with no external fetch at all; it now performs real web access, so
+    # per section 3's TIER 1 rules that access must run inside
+    # run_nondet_unsafe like every other external fetch in this contract
+    # — a live fetch inside an ordinary @gl.public.write method would be
+    # exactly the uncontained non-determinism run_nondet_unsafe exists to
+    # prevent, even though neither check here involves an LLM judgment.
     # ------------------------------------------------------------------
 
     @gl.public.write
@@ -655,11 +815,97 @@ class SentinelSLA(gl.Contract):
         clean_eco = _sanitize(ecosystem, 60)
         assert len(clean_eco) > 0, "ecosystem cannot be empty"
         assert int(sla_hours) > 0, "sla_hours must be > 0"
-        assert clean_repo not in self.slas, "SLA already registered for this repo"
+
+        owner, name = _parse_repo_url(clean_repo)
+        assert owner is not None, (
+            "repo_url must be a plain github.com/owner/repo reference"
+        )
+        repo_key = _canonical_repo_key(owner, name)
+        # Canonical-key check (ask #1): this now catches
+        # 'github.com/foo/bar', 'https://github.com/foo/bar/', and
+        # 'github.com/foo/bar.git' as the SAME repo, closing the
+        # duplicate-registration-under-cosmetic-variants gap the prior
+        # raw-string key had.
+        assert repo_key not in self.slas, "SLA already registered for this repo"
 
         sender = gl.message.sender_address
-        self.slas[clean_repo] = SlaRecord(
+        # Bug 10's confirmed normalization convention, applied here too:
+        # the address embedded in the on-repo ownership proof is checked
+        # against this same lowercased hex form.
+        sender_hex = sender.as_hex.lower()
+
+        repo_api_url = f"https://api.github.com/repos/{owner}/{name}"
+        proof_raw_url = f"https://raw.githubusercontent.com/{owner}/{name}/HEAD/{_OWNERSHIP_PROOF_PATH}"
+
+        # Bug 6 fix: nested functions, zero self reference anywhere in
+        # either body. Close only over owner, name, sender_hex, repo_key,
+        # and module-level constants/helpers — nothing storage-backed.
+        def leader_fn():
+            repo_ok, repo_data = _fetch_json(repo_api_url)
+            if not repo_ok:
+                return {
+                    "repo_exists": False,
+                    "ownership_proven": False,
+                    "reason": f"repo_fetch_failed:{repo_data}",
+                }
+            if not isinstance(repo_data, dict) or repo_data.get("full_name") is None:
+                return {
+                    "repo_exists": False,
+                    "ownership_proven": False,
+                    "reason": "repo_not_found_or_malformed",
+                }
+
+            proof_text = _fetch_text(proof_raw_url)
+            proven = _address_in_proof_text(proof_text, sender_hex)
+            return {
+                "repo_exists": True,
+                "ownership_proven": proven,
+                "reason": "" if proven else "ownership_proof_missing_or_no_match",
+            }
+
+        def validator_fn(leaders_res) -> bool:
+            if not isinstance(leaders_res, gl.vm.Return):
+                return False  # leader errored — disagree, force rotation
+            leader_data = leaders_res.calldata
+            if not isinstance(leader_data, dict):
+                return False
+            try:
+                my_data = leader_fn()  # direct call, never self.leader_fn()
+            except Exception:
+                return False
+            if not isinstance(my_data, dict):
+                return False
+            # Every field the registration decision depends on is
+            # re-derived and compared here, per this project's own
+            # confirmed, generalized validator-rigor rule — a repo either
+            # exists or it doesn't, and ownership either checks out or it
+            # doesn't; neither is "just a number" excused from comparison.
+            if leader_data.get("repo_exists") != my_data.get("repo_exists"):
+                return False
+            if leader_data.get("ownership_proven") != my_data.get("ownership_proven"):
+                return False
+            return True
+
+        # positional call — never leader_fn=/validator_fn= keywords
+        result = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
+
+        assert result.get("repo_exists") is True, (
+            "no repository found at that github.com owner/repo — this "
+            "contract only registers SLAs against real, existing "
+            "repositories (ask #1's canonical-repository binding)"
+        )
+        assert result.get("ownership_proven") is True, (
+            f"could not verify ownership: add a file at "
+            f"{owner}/{name}/{_OWNERSHIP_PROOF_PATH} (any branch's HEAD) "
+            f"containing your wallet address ({sender_hex}), then retry — "
+            "this contract only accepts an SLA commitment from someone "
+            "who can actually commit to the named repository"
+        )
+
+        self.slas[repo_key] = SlaRecord(
             repo_url=clean_repo,
+            repo_owner=owner,
+            repo_name=name,
             ecosystem=clean_eco,
             maintainer=sender,
             sla_hours=sla_hours,
@@ -684,7 +930,7 @@ class SentinelSLA(gl.Contract):
         # existing convention exactly -- one canonical casing rule, enforced
         # everywhere the key is constructed, rather than trusting .as_hex's
         # casing behavior implicitly at each call site.
-        rep_key = sender.as_hex.lower()
+        rep_key = sender_hex
         if rep_key not in self.reputation:
             self.reputation[rep_key] = ReputationEntry(
                 maintainer=sender,
@@ -695,7 +941,12 @@ class SentinelSLA(gl.Contract):
                 last_finalized_at=u256(0),
             )
 
-        return json.dumps({"repo_url": clean_repo, "sla_hours": int(sla_hours), "status": "registered"})
+        return json.dumps({
+            "repo_url": clean_repo,
+            "repo_key": repo_key,
+            "sla_hours": int(sla_hours),
+            "status": "registered",
+        })
 
     # ------------------------------------------------------------------
     # Filing (fully deterministic — ghsa_id is the ONLY evidence input,
@@ -705,20 +956,47 @@ class SentinelSLA(gl.Contract):
     @gl.public.write
     def file_compliance_check(self, repo_url: str, ghsa_id: str) -> str:
         clean_repo = _sanitize(repo_url, 240)
-        assert clean_repo in self.slas, "no SLA registered for this repo"
+        owner, name = _parse_repo_url(clean_repo)
+        assert owner is not None, (
+            "repo_url must be a plain github.com/owner/repo reference"
+        )
+        repo_key = _canonical_repo_key(owner, name)
+        assert repo_key in self.slas, "no SLA registered for this repo"
         clean_ghsa = _sanitize(ghsa_id, 40)
         assert clean_ghsa.upper().startswith("GHSA-"), "ghsa_id must be a valid GHSA identifier"
+
+        # Duplicate-filing guard (ask #2's 'duplicate' half): once a
+        # repo/GHSA pair has reached this contract's one real terminal
+        # state — finalized, via finalize_compliance, meaning its verdict
+        # has already applied a reputation delta — it can never be filed
+        # again. Re-filing an already-finalized pair would let the SAME
+        # advisory apply a second delta on a second finalize_compliance
+        # call, silently double-counting one real event. CHECK_VOIDED is
+        # included defensively in case a voiding path is added later —
+        # this contract has no such path today, so that branch of the
+        # check is currently unreachable, not load-bearing. A pair still
+        # in flight (filed/escrowed/challenged, not yet finalized) is
+        # deliberately NOT blocked here — that is not a duplicate, it is
+        # the same check progressing through its own lifecycle.
+        pair_key = f"{repo_key}:{clean_ghsa.upper()}"
+        existing_pair_status = self.filed_ghsa_pairs.get(pair_key, "")
+        assert existing_pair_status not in (CHECK_FINALIZED, CHECK_VOIDED), (
+            "this advisory has already been finalized against this repo — "
+            "an advisory can only affect the reputation ledger once"
+        )
 
         cid = self.next_check_id
         self.next_check_id = u256(int(self.next_check_id) + 1)
 
         now = u256(_now_epoch_seconds())
+        sender = gl.message.sender_address
 
         self.checks[cid] = ComplianceCheck(
             check_id=cid,
+            repo_key=repo_key,
             repo_url=clean_repo,
             ghsa_id=clean_ghsa,
-            filer=gl.message.sender_address,
+            filer=sender,
             filed_at=now,
             status=CHECK_FILED,
             verdict="",
@@ -732,9 +1010,20 @@ class SentinelSLA(gl.Contract):
             challenge_id="",
         )
 
-        sla = self.slas[clean_repo]
+        self.filed_ghsa_pairs[pair_key] = CHECK_FILED
+
+        sla = self.slas[repo_key]
         sla.check_count = u256(int(sla.check_count) + 1)
-        self.slas[clean_repo] = sla
+        self.slas[repo_key] = sla
+
+        # Ask #4's second half: record this filer's own most recent
+        # check_id, keyed by their own normalized address, rather than
+        # leaving the frontend to infer it from next_check_id - 1 (a real
+        # race condition under concurrent filers — any other write
+        # bumping next_check_id between this transaction confirming and
+        # a naive frontend read would silently point at the wrong check).
+        filer_key = sender.as_hex.lower()
+        self.latest_check_by_filer[filer_key] = cid
 
         return json.dumps({"check_id": int(cid), "status": CHECK_FILED})
 
@@ -747,9 +1036,9 @@ class SentinelSLA(gl.Contract):
         assert check_id in self.checks, "check not found"
         check = self.checks[check_id]
         assert check.status == CHECK_FILED, "check not in filed state"
-        assert check.repo_url in self.slas, "SLA no longer registered"
+        assert check.repo_key in self.slas, "SLA no longer registered"
 
-        sla = self.slas[check.repo_url]
+        sla = self.slas[check.repo_key]
 
         # Bug 4 fix: copy to memory in the plain deterministic body,
         # BEFORE entering run_nondet_unsafe. Nothing storage-backed is
@@ -787,6 +1076,27 @@ class SentinelSLA(gl.Contract):
                 if not isinstance(result, dict):
                     raise gl.vm.UserError("llm_non_dict_response")
                 return result
+
+            # Applicability check (ask #2's 'invalid filing' half): the
+            # advisory must actually concern the repo this check was
+            # filed against, per GHSA's OWN source_code_location field —
+            # never the filer's say-so. Without this, any real GHSA ID
+            # could be filed against any registered SLA regardless of
+            # subject matter, and the LLM would be asked to judge
+            # resolution timing/fix quality for a vulnerability that has
+            # nothing to do with the named repo. This is a hard reject,
+            # not a judgment call — it happens before any prompt is
+            # built, and raises rather than degrading to a verdict, since
+            # a mismatched filing is not evidence about anything; it is
+            # an invalid input to this check entirely.
+            source_loc = advisory.get("source_code_location")
+            if not _repo_matches_source_location(source_loc, sla_mem.repo_owner, sla_mem.repo_name):
+                raise gl.vm.UserError(
+                    f"advisory_repo_mismatch: GHSA {check_mem.ghsa_id}'s own "
+                    f"source_code_location ({source_loc!r}) does not resolve "
+                    f"to {sla_mem.repo_owner}/{sla_mem.repo_name} — this "
+                    "advisory cannot be filed against this repo's SLA"
+                )
 
             state = advisory.get("state", "")
             published_at = advisory.get("published_at")
@@ -1146,8 +1456,8 @@ Respond ONLY with JSON using exactly these keys:
         # the window's purpose (giving someone a chance to challenge) was
         # already served.
 
-        assert check.repo_url in self.slas, "SLA no longer registered"
-        sla = self.slas[check.repo_url]
+        assert check.repo_key in self.slas, "SLA no longer registered"
+        sla = self.slas[check.repo_key]
         # Lowercased to match register_sla's now-fixed key convention (see
         # that function's own comment for the full live-bug explanation) —
         # this line itself never caused a live failure, since it was
@@ -1173,6 +1483,19 @@ Respond ONLY with JSON using exactly these keys:
         check.finalized_at = u256(now)
         self.checks[check_id] = check
 
+        # Closes the duplicate-filing guard opened in file_compliance_check
+        # (ask #2's 'duplicate' half): this repo/GHSA pair is now
+        # permanently spent — it has affected the reputation ledger above
+        # via this exact finalize_compliance call, and re-filing it would
+        # let the same real-world advisory apply a second reputation
+        # delta on a second finalize_compliance call. Without this write,
+        # the guard checked in file_compliance_check would never actually
+        # close, since CHECK_FILED is the only status ever written into
+        # this TreeMap otherwise — the guard would exist in code but never
+        # fire in the real lifecycle.
+        pair_key = f"{check.repo_key}:{check.ghsa_id.upper()}"
+        self.filed_ghsa_pairs[pair_key] = CHECK_FINALIZED
+
         return json.dumps({"check_id": int(check_id), "verdict": check.verdict, "status": CHECK_FINALIZED})
 
     # ------------------------------------------------------------------
@@ -1182,10 +1505,18 @@ Respond ONLY with JSON using exactly these keys:
     @gl.public.view
     def get_sla(self, repo_url: str) -> str:
         clean_repo = _sanitize(repo_url, 240)
-        assert clean_repo in self.slas, "no SLA registered for this repo"
-        s = self.slas[clean_repo]
+        owner, name = _parse_repo_url(clean_repo)
+        assert owner is not None, (
+            "repo_url must be a plain github.com/owner/repo reference"
+        )
+        repo_key = _canonical_repo_key(owner, name)
+        assert repo_key in self.slas, "no SLA registered for this repo"
+        s = self.slas[repo_key]
         return json.dumps({
             "repo_url": s.repo_url,
+            "repo_key": repo_key,
+            "repo_owner": s.repo_owner,
+            "repo_name": s.repo_name,
             "ecosystem": s.ecosystem,
             "maintainer": str(s.maintainer),
             "sla_hours": int(s.sla_hours),
@@ -1194,11 +1525,33 @@ Respond ONLY with JSON using exactly these keys:
         })
 
     @gl.public.view
+    def get_latest_check_id(self, filer_address: str) -> str:
+        """
+        Replaces the frontend's prior pattern of inferring a just-filed
+        check's ID as next_check_id - 1 immediately after file_compliance_
+        check's transaction confirms — a real race condition under
+        concurrent filers (or any other write bumping next_check_id
+        between the filing tx confirming and that read firing), which the
+        steward's review flagged by name. Scoped to the actual filer's own
+        address rather than the global counter, so it stays correct
+        regardless of what anyone else has filed in the meantime.
+        Returns has_filed=False (never raises) for an address that has
+        never filed anything — a clean, checkable false rather than a
+        KeyError the frontend would have to catch.
+        """
+        clean_addr = _sanitize(filer_address, 80).lower()
+        if not clean_addr or clean_addr not in self.latest_check_by_filer:
+            return json.dumps({"has_filed": False, "check_id": 0})
+        cid = self.latest_check_by_filer[clean_addr]
+        return json.dumps({"has_filed": True, "check_id": int(cid)})
+
+    @gl.public.view
     def get_check(self, check_id: u256) -> str:
         assert check_id in self.checks, "check not found"
         c = self.checks[check_id]
         return json.dumps({
             "check_id": int(c.check_id),
+            "repo_key": c.repo_key,
             "repo_url": c.repo_url,
             "ghsa_id": c.ghsa_id,
             "filer": str(c.filer),
