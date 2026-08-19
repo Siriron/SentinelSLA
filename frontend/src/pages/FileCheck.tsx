@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useGenLayer, TimeoutError } from '../hooks/useGenLayer';
 import Field from '../components/Field';
 import TxStatus, { TxState } from '../components/TxStatus';
@@ -31,9 +32,18 @@ export default function FileCheck() {
     try {
       const { hash } = await writeContract(methods.write.fileComplianceCheck, [repoUrl.trim(), ghsaId.trim()]);
       setFileTx({ status: 'success', hash });
-      const nextId = await readContract(methods.read.getNextCheckId, []);
-      const filedId = Number(nextId.next_check_id) - 1;
-      setCheckId(filedId);
+      // Reads this filer's own latest check_id back from the contract,
+      // scoped to their own address — never inferred as
+      // next_check_id - 1, which was a real race condition under
+      // concurrent filers (any other write bumping next_check_id
+      // between this transaction confirming and the read firing would
+      // silently point at the wrong check).
+      const latest = await readContract(methods.read.getLatestCheckId, [account]);
+      if (latest.has_filed) {
+        setCheckId(Number(latest.check_id));
+      } else {
+        setFileTx({ status: 'error', message: 'Filed, but could not read back the check ID. Refresh and check the explorer transaction.' });
+      }
     } catch (err: any) {
       if (err instanceof TimeoutError) setFileTx({ status: 'timeout', hash: err.txHash });
       else setFileTx({ status: 'error', message: err?.message ?? 'Unknown error' });
@@ -138,10 +148,16 @@ export default function FileCheck() {
               </div>
             </div>
           </div>
-          <div className="px-5 pb-4">
-            <p className="font-sans text-xs text-tracedim leading-relaxed">
+          <div className="px-5 pb-5">
+            <p className="font-sans text-xs text-tracedim leading-relaxed mb-3">
               Escrowed for a seven-day challenge window before it finalizes onto the reputation ledger.
             </p>
+            <Link
+              to={`/checks/${checkId}`}
+              className="inline-block font-mono text-xs text-phosphor hover:text-trace underline underline-offset-2"
+            >
+              Track this check — challenge or finalize it →
+            </Link>
           </div>
         </div>
       )}
