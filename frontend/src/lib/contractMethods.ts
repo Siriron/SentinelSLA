@@ -1,5 +1,5 @@
 // Method registry, matching contracts/sentinel_sla.py exactly as deployed
-// at 0x9bf02585228D7A7E3d4dcB3a35928045a7C250E8 (StudioNet). This is the
+// at 0x2DdE4639AC5941FD46cA3Fa035ee56e33f2d9ff6 (StudioNet). This is the
 // single place method names/args are defined — every call site imports
 // from here rather than typing method names inline, so a contract change
 // only needs updating in one place.
@@ -33,6 +33,7 @@ const SENTINEL_SLA_ABI_METHODS = {
     getChallenge: 'get_challenge',
     getReputation: 'get_reputation',
     getNextCheckId: 'get_next_check_id',
+    getLatestCheckId: 'get_latest_check_id',
   },
 } as const;
 
