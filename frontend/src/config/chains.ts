@@ -8,8 +8,7 @@
 // deployment behind it would be worse than not offering one at all).
 
 export const STUDIONET_CONTRACT_ADDRESS =
-  import.meta.env.VITE_CONTRACT_ADDRESS_STUDIONET ||
-  '0x9bf02585228D7A7E3d4dcB3a35928045a7C250E8';
+  '0x2DdE4639AC5941FD46cA3Fa035ee56e33f2d9ff6';
 
 export const STUDIONET_CONFIG = {
   chainId: '0xF22F', // 61999
